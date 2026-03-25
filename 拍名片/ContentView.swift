@@ -26,6 +26,9 @@ struct ContentView: View {
     @State private var cardCandidates: [DetectedCardCandidate] = []
     @State private var isShowingCardPicker = false
     @State private var isShowingProSheet = false
+    @State private var isShowingMyCardSheet = false
+    @State private var isShowingQRScanner = false
+    @State private var myDigitalCard = MyDigitalCardStore.shared.load()
     @State private var noticeMessage = ""
     @State private var isShowingNotice = false
     @State private var outreachContext = ""
@@ -35,18 +38,17 @@ struct ContentView: View {
     @State private var isEnhancingCard = false
     @State private var enhancementMessage = ""
     @State private var currentScanID = UUID()
-    @AppStorage("isProUnlocked") private var isProUnlocked = false
-    @AppStorage("openAIAPIKey") private var openAIAPIKey = ""
+    private let isProUnlocked = true
 
     private let contactStoreService = ContactStoreService()
     private let openAIService = OpenAIService()
 
     private var planTier: PlanTier {
-        isProUnlocked ? .pro : .free
+        .pro
     }
 
     private var isProLLMReady: Bool {
-        isProUnlocked && !openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !AppSecrets.aiProxyBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -72,9 +74,9 @@ struct ContentView: View {
                     Button {
                         isShowingProSheet = true
                     } label: {
-                        Text(isProUnlocked ? "PRO" : "升級 Pro")
+                        Text(isProLLMReady ? "AI 已可用" : "AI 服務")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(isProUnlocked ? .orange : .primary)
+                            .foregroundStyle(.orange)
                     }
                 }
             }
@@ -221,13 +223,40 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isShowingProSheet) {
             ProUpgradeView(
-                isProUnlocked: isProUnlocked,
-                apiKey: $openAIAPIKey,
-                onUpgrade: {
-                    isProUnlocked = true
+                onClose: {
                     isShowingProSheet = false
                 }
             )
+        }
+        .sheet(isPresented: $isShowingMyCardSheet) {
+            NavigationStack {
+                MyDigitalCardView(
+                    card: $myDigitalCard,
+                    latestScannedCard: scannedCard
+                )
+            }
+        }
+        .sheet(isPresented: $isShowingQRScanner) {
+            NavigationStack {
+                QRImportView(
+                    onClose: {
+                        isShowingQRScanner = false
+                    },
+                    onImport: { importedCard in
+                        scannedCard = importedCard
+                        outreachSuggestions = []
+                        copiedSuggestionID = nil
+                        isShowingQRScanner = false
+                        screen = .review
+                        noticeMessage = "已讀取對方的電子名片，你可以直接檢查後存入聯絡人。"
+                        isShowingNotice = true
+                    },
+                    onFailure: { error in
+                        isShowingQRScanner = false
+                        showError(error)
+                    }
+                )
+            }
         }
         .onChange(of: selectedPhoto) { _, newItem in
             guard let newItem else { return }
@@ -262,17 +291,19 @@ struct ContentView: View {
         VStack(spacing: 24) {
             homeIllustration
 
+            myDigitalCardPreview
+
             VStack(spacing: 12) {
                 HStack(spacing: 8) {
                     Text("拍名片")
                         .font(.largeTitle.bold())
 
-                    Text(isProUnlocked ? "PRO" : "FREE")
+                    Text("AI")
                         .font(.caption.weight(.bold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(isProUnlocked ? Color.orange.opacity(0.15) : Color(.secondarySystemBackground))
-                        .foregroundStyle(isProUnlocked ? .orange : .secondary)
+                        .background(Color.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
                         .clipShape(Capsule())
                 }
 
@@ -283,6 +314,16 @@ struct ContentView: View {
             }
 
             VStack(spacing: 12) {
+                Button("我的電子名片") {
+                    isShowingMyCardSheet = true
+                }
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                 Button("拍一張") {
                     isShowingCamera = true
                 }
@@ -297,16 +338,108 @@ struct ContentView: View {
                 }
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Button("掃描電子名片 QR") {
+                    isShowingQRScanner = true
+                }
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
 
             planCard
 
             Spacer()
 
-            Link("Developed by WoWo AI Commerce", destination: URL(string: "https://wowo.one")!)
-                .font(.footnote)
+            Link(destination: URL(string: "https://wowo.one")!) {
+                HStack(spacing: 6) {
+                    Image("WoWoLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .opacity(0.85)
+
+                    Text("Developed by WoWo AI Commerce")
+                        .font(.footnote)
+                }
                 .foregroundStyle(.tertiary)
+            }
         }
+    }
+
+    private var myDigitalCardPreview: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("我的電子名片")
+                        .font(.headline)
+
+                    Text("直接出示 QR Code，讓對方快速掃描匯入。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("編輯") {
+                    isShowingMyCardSheet = true
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+
+            if let qrImage = myDigitalCardPreviewImage {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(myDigitalCard.displayName)
+                            .font(.headline)
+
+                        if !myDigitalCard.company.isEmpty {
+                            Text(myDigitalCard.company)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !myDigitalCard.jobTitle.isEmpty {
+                            Text(myDigitalCard.jobTitle)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    Image(uiImage: qrImage)
+                        .interpolation(.none)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 108, height: 108)
+                        .padding(10)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+            } else {
+                Button("建立我的電子名片") {
+                    isShowingMyCardSheet = true
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private var myDigitalCardPreviewImage: UIImage? {
+        guard myDigitalCard.hasContent,
+              let vCard = try? VCardService.makeVCardString(from: myDigitalCard)
+        else {
+            return nil
+        }
+
+        return VCardService.makeQRCode(from: vCard, sideLength: 480)
     }
 
     private var loadingView: some View {
@@ -375,10 +508,11 @@ struct ContentView: View {
                     isShowingEditor = true
                 }
                 .foregroundStyle(.secondary)
-            }
 
-            if planTier == .free {
-                upgradeBanner
+                Button("顯示我的電子名片 QR") {
+                    isShowingMyCardSheet = true
+                }
+                .foregroundStyle(.secondary)
             }
 
             if isEnhancingCard {
@@ -412,6 +546,11 @@ struct ContentView: View {
             }
             .buttonStyle(PrimaryButtonStyle())
             .padding(.top, 12)
+
+            Button("顯示我的電子名片 QR") {
+                isShowingMyCardSheet = true
+            }
+            .foregroundStyle(.secondary)
 
             Spacer()
         }
@@ -456,15 +595,23 @@ struct ContentView: View {
                     return
                 }
 
+                let autoEnhanceDecision = shouldAutoEnhanceWithAI(lines: lines, card: localCard)
+                guard autoEnhanceDecision.shouldEnhance else {
+                    if let reason = autoEnhanceDecision.reason {
+                        noticeMessage = reason
+                        isShowingNotice = true
+                    }
+                    return
+                }
+
                 isEnhancingCard = true
-                enhancementMessage = "正在用 Pro 智慧辨識優化姓名、公司與聯絡方式..."
+                enhancementMessage = "偵測到這張名片較複雜，正在用 AI 智慧辨識優化姓名、公司與聯絡方式..."
 
                 Task {
                     do {
                         let enhancedCard = try await openAIService.parseBusinessCard(
                             lines: lines,
-                            fallback: localCard,
-                            apiKey: openAIAPIKey
+                            fallback: localCard
                         )
 
                         guard currentScanID == scanID else {
@@ -474,7 +621,7 @@ struct ContentView: View {
                         scannedCard = enhancedCard
                         isEnhancingCard = false
                         enhancementMessage = ""
-                        noticeMessage = "已完成智慧優化，結果已更新。"
+                        noticeMessage = "已完成 AI 智慧優化，結果已更新。"
                         isShowingNotice = true
                     } catch {
                         guard currentScanID == scanID else {
@@ -483,7 +630,7 @@ struct ContentView: View {
 
                         isEnhancingCard = false
                         enhancementMessage = ""
-                        noticeMessage = "智慧辨識暫時失敗，這次先使用基本辨識結果。"
+                        noticeMessage = "AI 智慧優化暫時失敗，這次先使用基本辨識結果。"
                         isShowingNotice = true
                     }
                 }
@@ -492,6 +639,49 @@ struct ContentView: View {
                 showError(error)
             }
         }
+    }
+
+    private func shouldAutoEnhanceWithAI(lines: [OCRTextLine], card: ScannedCard) -> (shouldEnhance: Bool, reason: String?) {
+        let nonEmptyPhoneCount = card.phoneNumbers.filter { !$0.isEmpty }.count
+        let nonEmptyEmailCount = card.emails.filter { !$0.isEmpty }.count
+        let compactName = card.fullName.replacingOccurrences(of: " ", with: "")
+        let missingCoreFields =
+            compactName.isEmpty ||
+            card.company.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            (nonEmptyPhoneCount == 0 && nonEmptyEmailCount == 0)
+
+        if missingCoreFields {
+            return (true, nil)
+        }
+
+        let lineTexts = lines.map(\.text)
+        let lineCount = lines.count
+        let maxLineLength = lineTexts.map(\.count).max() ?? 0
+
+        let containsMixedLanguages = lineTexts.contains { text in
+            let hasLatin = text.range(of: "[A-Za-z]", options: .regularExpression) != nil
+            let hasCJK = text.range(of: #"\p{Han}"#, options: .regularExpression) != nil
+            return hasLatin && hasCJK
+        }
+
+        let hasManyContactMethods = nonEmptyPhoneCount + nonEmptyEmailCount >= 4
+        let hasDenseLayout = lineCount >= 9
+        let hasLongAddress = card.address.count >= 28
+        let missingTitle = card.jobTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        let shouldEnhance =
+            hasDenseLayout ||
+            containsMixedLanguages ||
+            hasManyContactMethods ||
+            hasLongAddress ||
+            (missingTitle && lineCount >= 6) ||
+            maxLineLength >= 30
+
+        if shouldEnhance {
+            return (true, nil)
+        }
+
+        return (false, "本地辨識結果已足夠完整，這次先不額外使用 AI。")
     }
 
     private func saveContact() {
@@ -532,32 +722,27 @@ struct ContentView: View {
             return "拍一張或選一張名片照片，快速存進聯絡人。"
         case .pro:
             return isProLLMReady
-                ? "使用 Pro 智慧辨識，更穩定整理複雜版面、雙語名片與多張名片照片。"
-                : "Pro 已啟用。再填入 OpenAI API Key，就能開始使用智慧辨識。"
+                ? "會先做本地 OCR，遇到較複雜的名片時再由後台 AI 補強整理。"
+                : "可先用本地 OCR 完成掃描；接上後台 AI 服務後可自動補強複雜名片。"
         }
     }
 
     private var planCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(planTier == .pro ? "你目前使用 Pro 版" : "免費版可先完成基本掃描")
+            Text(
+                planTier == .free
+                ? "免費版可先完成基本掃描"
+                : "AI 智慧功能已可使用"
+            )
                 .font(.headline)
 
             Text(
                 planTier == .pro
-                ? (isProLLMReady
-                    ? "目前已接上智慧辨識流程，會先做本地 OCR，再用模型整理姓名、公司、地址與職稱。"
-                    : "再填入 OpenAI API Key，就能開始使用 Pro 智慧辨識。")
-                : "升級 Pro 後，可解鎖更準確的智慧辨識，減少手動修改時間。"
+                ? "目前會先做本地 OCR，遇到較複雜的名片時再交由後台 AI 服務補強整理。"
+                : "免費版可先用本地 OCR。"
             )
             .font(.subheadline)
             .foregroundStyle(.secondary)
-
-            if planTier == .free {
-                Button("查看 Pro 方案") {
-                    isShowingProSheet = true
-                }
-                .font(.subheadline.weight(.semibold))
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -566,75 +751,85 @@ struct ContentView: View {
     }
 
     private var homeIllustration: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.98, green: 0.83, blue: 0.47),
-                            Color(red: 0.95, green: 0.72, blue: 0.33)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        Link(destination: URL(string: "https://wowo.one")!) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 34, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.98, green: 0.83, blue: 0.47),
+                                Color(red: 0.95, green: 0.72, blue: 0.33)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
 
-            Circle()
-                .fill(.white.opacity(0.18))
-                .frame(width: 180, height: 180)
-                .offset(x: -90, y: -50)
-
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.white)
-                .frame(width: 220, height: 160)
-                .rotationEffect(.degrees(-8))
-                .offset(x: -28, y: 10)
-                .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
-
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(red: 0.12, green: 0.13, blue: 0.15))
-                .frame(width: 220, height: 160)
-                .rotationEffect(.degrees(8))
-                .offset(x: 44, y: 4)
-                .shadow(color: .black.opacity(0.1), radius: 18, y: 10)
-
-            VStack(spacing: 8) {
                 Circle()
-                    .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
-                    .frame(width: 40, height: 40)
+                    .fill(.white.opacity(0.18))
+                    .frame(width: 180, height: 180)
+                    .offset(x: -90, y: -50)
 
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
-                    .frame(width: 72, height: 34)
-            }
-            .offset(x: -58, y: 8)
-
-            VStack(alignment: .leading, spacing: 10) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .fill(.white)
-                    .frame(width: 88, height: 12)
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.white.opacity(0.75))
-                    .frame(width: 62, height: 10)
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.white.opacity(0.45))
-                    .frame(width: 106, height: 10)
+                    .frame(width: 220, height: 160)
+                    .rotationEffect(.degrees(-8))
+                    .offset(x: -28, y: 10)
+                    .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
+
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(Color(red: 0.12, green: 0.13, blue: 0.15))
+                    .frame(width: 220, height: 160)
+                    .rotationEffect(.degrees(8))
+                    .offset(x: 44, y: 4)
+                    .shadow(color: .black.opacity(0.1), radius: 18, y: 10)
+
+                VStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
+                        .frame(width: 40, height: 40)
+
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
+                        .frame(width: 72, height: 34)
+                }
+                .offset(x: -58, y: 8)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white)
+                        .frame(width: 88, height: 12)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white.opacity(0.75))
+                        .frame(width: 62, height: 10)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white.opacity(0.45))
+                        .frame(width: 106, height: 10)
+                }
+                .offset(x: 72, y: 6)
+
+                Image("WoWoLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 118, height: 118)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
+                    .offset(x: 76, y: -54)
             }
-            .offset(x: 72, y: 6)
         }
         .frame(height: 220)
     }
 
     private var upgradeBanner: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("升級 Pro，辨識更準")
+            Text("啟用 AI，辨識更準")
                 .font(.headline)
 
             Text("複雜版面、雙語名片與多張名片照片，都能更穩定整理。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Button("升級 Pro") {
+            Button("啟用 AI") {
                 isShowingProSheet = true
             }
             .font(.subheadline.weight(.semibold))
@@ -685,7 +880,7 @@ struct ContentView: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isGeneratingOutreach)
             } else {
-                Button("升級 Pro 以生成聯絡訊息") {
+                Button("啟用 AI 以生成聯絡訊息") {
                     isShowingProSheet = true
                 }
                 .font(.subheadline.weight(.semibold))
@@ -739,8 +934,7 @@ struct ContentView: View {
             do {
                 outreachSuggestions = try await openAIService.generateOutreachSuggestions(
                     card: scannedCard,
-                    context: outreachContext,
-                    apiKey: openAIAPIKey
+                    context: outreachContext
                 )
             } catch {
                 noticeMessage = "聯絡建議生成失敗，請稍後再試。"
@@ -758,6 +952,236 @@ struct ContentView: View {
                 .font(.headline)
 
             content()
+        }
+    }
+}
+
+private struct MyDigitalCardView: View {
+    @Binding var card: ScannedCard
+    let latestScannedCard: ScannedCard
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var qrImage: UIImage? {
+        guard let vCard = try? VCardService.makeVCardString(from: card) else {
+            return nil
+        }
+        return VCardService.makeQRCode(from: vCard)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("我的電子名片")
+                        .font(.title2.bold())
+
+                    Text("你可以先把自己的資料存在這裡，之後直接打開 QR Code 給別人掃描。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if latestScannedCard.hasContent {
+                    Button("套用目前掃描到的名片資料") {
+                        card = latestScannedCard
+                        persistCard()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                }
+
+                VStack(spacing: 14) {
+                    if let qrImage {
+                        VStack(spacing: 12) {
+                            Text("給對方掃描的 QR Code")
+                                .font(.headline)
+
+                            Image(uiImage: qrImage)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 280)
+                                .padding(20)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                        .stroke(Color(.separator), lineWidth: 1)
+                                )
+                        }
+                    } else {
+                        VStack(spacing: 8) {
+                            Text("目前無法生成 QR Code")
+                                .font(.headline)
+                            Text("請先確認這張名片至少有姓名、電話或 Email 等基本資料。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(24)
+                        .frame(maxWidth: .infinity)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+
+                    VStack(spacing: 6) {
+                        Text(card.displayName)
+                            .font(.headline)
+
+                        if !card.company.isEmpty {
+                            Text(card.company)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !card.jobTitle.isEmpty {
+                            Text(card.jobTitle)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                VStack(spacing: 12) {
+                    TextField("名", text: $card.givenName)
+                        .editorFieldStyle()
+                    TextField("姓", text: $card.familyName)
+                        .editorFieldStyle()
+                    TextField("公司", text: $card.company)
+                        .editorFieldStyle()
+                    TextField("職稱", text: $card.jobTitle)
+                        .editorFieldStyle()
+                    TextField("電話", text: binding(forPhoneAt: 0, defaultKind: .mobile))
+                        .keyboardType(.phonePad)
+                        .editorFieldStyle()
+                    TextField("Email", text: binding(forEmailAt: 0, defaultKind: .work))
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .editorFieldStyle()
+                    TextField("地址", text: $card.address, axis: .vertical)
+                        .lineLimit(2...4)
+                        .editorFieldStyle()
+                }
+
+                Text("這個版本不需要 server，電子名片資料會直接寫進 QR Code。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(24)
+        }
+        .navigationTitle("電子名片 QR")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            card.normalized()
+        }
+        .onChange(of: card) { _, newValue in
+            MyDigitalCardStore.shared.save(newValue)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("關閉") {
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    private func binding(forPhoneAt index: Int, defaultKind: LabeledValue.Kind) -> Binding<String> {
+        Binding(
+            get: {
+                guard card.phoneNumbers.indices.contains(index) else { return "" }
+                return card.phoneNumbers[index].value
+            },
+            set: { newValue in
+                ensurePhoneSlot(at: index, defaultKind: defaultKind)
+                card.phoneNumbers[index].value = newValue
+                persistCard()
+            }
+        )
+    }
+
+    private func binding(forEmailAt index: Int, defaultKind: LabeledValue.Kind) -> Binding<String> {
+        Binding(
+            get: {
+                guard card.emails.indices.contains(index) else { return "" }
+                return card.emails[index].value
+            },
+            set: { newValue in
+                ensureEmailSlot(at: index, defaultKind: defaultKind)
+                card.emails[index].value = newValue
+                persistCard()
+            }
+        )
+    }
+
+    private func ensurePhoneSlot(at index: Int, defaultKind: LabeledValue.Kind) {
+        while !card.phoneNumbers.indices.contains(index) {
+            card.phoneNumbers.append(LabeledValue(kind: defaultKind, value: ""))
+        }
+    }
+
+    private func ensureEmailSlot(at index: Int, defaultKind: LabeledValue.Kind) {
+        while !card.emails.indices.contains(index) {
+            card.emails.append(LabeledValue(kind: defaultKind, value: ""))
+        }
+    }
+
+    private func persistCard() {
+        var normalized = card
+        normalized.normalized()
+        card = normalized
+        MyDigitalCardStore.shared.save(normalized)
+    }
+}
+
+private struct QRImportView: View {
+    let onClose: () -> Void
+    let onImport: (ScannedCard) -> Void
+    let onFailure: (Error) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            QRScannerView { result in
+                switch result {
+                case .success(let payload):
+                    do {
+                        let importedCard = try VCardService.parseScannedCard(fromVCard: payload)
+                        onImport(importedCard)
+                    } catch {
+                        onFailure(error)
+                    }
+                case .failure(let error):
+                    onFailure(error)
+                }
+            }
+            .ignoresSafeArea()
+
+            VStack(spacing: 10) {
+                Text("掃描對方的電子名片 QR")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                Text("請把 QR Code 對準取景框，讀取後會直接帶入可存成聯絡人的資料。")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity)
+            .background(.black.opacity(0.65))
+        }
+        .navigationTitle("掃描電子名片")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("關閉") {
+                    onClose()
+                    dismiss()
+                }
+                .foregroundStyle(.white)
+            }
         }
     }
 }
@@ -784,76 +1208,64 @@ private extension View {
 }
 
 private struct ProUpgradeView: View {
-    let isProUnlocked: Bool
-    @Binding var apiKey: String
-    let onUpgrade: () -> Void
+    let onClose: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+
+    private var isAIReady: Bool {
+        !AppSecrets.aiProxyBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("升級 Pro，辨識更準")
+                        Text("AI 功能")
                             .font(.largeTitle.bold())
 
-                        Text("少改幾次，快很多。Pro 會更準確辨識姓名、公司、地址與職稱，幫你省下手動修改時間。")
+                        Text("本 App 會先進行本地 OCR，再於需要時連到後台 thin proxy，由後台代為呼叫 AI 模型。使用者不需要另外輸入 API Key。")
                             .font(.body)
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
-                        FeatureRow(title: "免費版", detail: "本地 OCR、基本欄位整理、手動修改、存入聯絡人")
-                        FeatureRow(title: "Pro", detail: "智慧辨識、職稱抽取、複雜版面更穩、雙語名片更好、多張名片照片處理更穩")
+                        FeatureRow(title: "本地基礎能力", detail: "本地 OCR、基本欄位整理、手動修改、存入聯絡人")
+                        FeatureRow(title: "AI 智慧功能", detail: "複雜名片會自動交給後台 AI 補強整理，並可生成聯絡訊息")
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("目前狀態")
                             .font(.headline)
 
-                        Text(
-                            isProUnlocked
-                            ? "你已經是 Pro。填入 OpenAI API Key 後，App 會在 Pro 模式下呼叫模型做名片欄位整理。"
-                            : "先啟用 Pro 原型，再填入 OpenAI API Key 測試智慧辨識。"
-                        )
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        Text(isAIReady ? "目前已連結後台 AI 服務，使用者可直接使用智慧辨識與聯絡建議功能。" : "目前尚未設定後台 AI 服務網址，AI 智慧功能暫時不會啟用。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("OpenAI API Key（原型測試）")
+                        Text("原型說明")
                             .font(.headline)
 
-                        SecureField("sk-...", text: $apiKey)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .padding(14)
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                        Text("這個欄位只適合原型測試。正式版不應把 API key 直接放在手機 App 裡。")
+                        Text("目前採用 thin proxy 架構，由後台保存模型金鑰並代呼叫 AI。這樣使用者不需要管理 API Key，也更容易控制成本與限額。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
 
-                    Button(isProUnlocked ? "已啟用 Pro" : "啟用 Pro 原型") {
-                        if !isProUnlocked {
-                            onUpgrade()
-                        } else {
-                            dismiss()
-                        }
+                    Button("完成並關閉") {
+                        onClose()
+                        dismiss()
                     }
                     .buttonStyle(PrimaryButtonStyle())
-                    .disabled(isProUnlocked)
                 }
                 .padding(24)
             }
-            .navigationTitle("Pro 方案")
+            .navigationTitle("AI 功能")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("關閉") {
+                        onClose()
                         dismiss()
                     }
                 }

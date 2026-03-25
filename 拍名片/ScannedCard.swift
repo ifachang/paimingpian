@@ -1,6 +1,6 @@
 import Foundation
 
-struct LabeledValue: Equatable, Identifiable {
+struct LabeledValue: Equatable, Identifiable, Codable {
     enum Kind: String, CaseIterable, Codable {
         case mobile
         case work
@@ -39,7 +39,7 @@ struct LabeledValue: Equatable, Identifiable {
     }
 }
 
-struct ScannedCard: Equatable {
+struct ScannedCard: Equatable, Codable {
     var givenName = ""
     var familyName = ""
     var company = ""

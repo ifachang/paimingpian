@@ -1,16 +1,16 @@
 import Foundation
 
 enum OpenAIServiceError: LocalizedError {
-    case missingAPIKey
+    case missingProxyURL
     case invalidResponse
     case serverError(String)
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey:
-            return "尚未填入 OpenAI API Key。"
+        case .missingProxyURL:
+            return "AI 服務尚未完成設定。"
         case .invalidResponse:
-            return "OpenAI 回傳格式無法解析。"
+            return "AI 回傳格式無法解析。"
         case .serverError(let message):
             return message
         }
@@ -18,34 +18,14 @@ enum OpenAIServiceError: LocalizedError {
 }
 
 final class OpenAIService {
-    func parseBusinessCard(lines: [OCRTextLine], fallback: ScannedCard, apiKey: String) async throws -> ScannedCard {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
-            throw OpenAIServiceError.missingAPIKey
+    func parseBusinessCard(lines: [OCRTextLine], fallback: ScannedCard) async throws -> ScannedCard {
+        let proxyURL = resolvedProxyURL()
+        guard !proxyURL.isEmpty else {
+            throw OpenAIServiceError.missingProxyURL
         }
-
-        let parsedCard = try await sendRequest(lines: lines, fallback: fallback, apiKey: trimmedKey)
-        return parsedCard.toScannedCard(fallback: fallback)
-    }
-
-    func generateOutreachSuggestions(card: ScannedCard, context: String, apiKey: String) async throws -> [OutreachSuggestion] {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKey.isEmpty else {
-            throw OpenAIServiceError.missingAPIKey
-        }
-
-        let parsed = try await sendOutreachRequest(card: card, context: context, apiKey: trimmedKey)
-        return parsed.suggestions
-    }
-
-    private func sendRequest(lines: [OCRTextLine], fallback: ScannedCard, apiKey: String) async throws -> OpenAIParsedCard {
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         let payload = OpenAIResponseRequest(
-            model: "gpt-5-mini-2025-08-07",
+            model: AppSecrets.openAIModel,
             input: [
                 .init(role: "system", content: [.init(type: "input_text", text: systemPrompt)]),
                 .init(role: "user", content: [.init(type: "input_text", text: buildUserPrompt(lines: lines, fallback: fallback))])
@@ -60,38 +40,22 @@ final class OpenAIService {
             )
         )
 
-        request.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
+        let decoded = try await sendResponsesRequest(payload, proxyURL: proxyURL)
+        guard let jsonText = decoded.outputText ?? decoded.outputMessageText else {
             throw OpenAIServiceError.invalidResponse
         }
 
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
-            let apiError = try? JSONDecoder().decode(OpenAIAPIErrorEnvelope.self, from: data)
-            throw OpenAIServiceError.serverError(apiError?.error.message ?? "OpenAI API 呼叫失敗。")
-        }
-
-        let decoded = try JSONDecoder().decode(OpenAIResponseEnvelope.self, from: data)
-        let jsonText = decoded.outputText ?? decoded.outputMessageText
-
-        guard let jsonText,
-              let jsonData = jsonText.data(using: .utf8)
-        else {
-            throw OpenAIServiceError.invalidResponse
-        }
-
-        return try JSONDecoder().decode(OpenAIParsedCard.self, from: jsonData)
+        return try decodeJSONPayload(OpenAIParsedCard.self, from: jsonText).toScannedCard(fallback: fallback)
     }
 
-    private func sendOutreachRequest(card: ScannedCard, context: String, apiKey: String) async throws -> OutreachSuggestionsEnvelope {
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    func generateOutreachSuggestions(card: ScannedCard, context: String) async throws -> [OutreachSuggestion] {
+        let proxyURL = resolvedProxyURL()
+        guard !proxyURL.isEmpty else {
+            throw OpenAIServiceError.missingProxyURL
+        }
 
         let payload = OpenAIResponseRequest(
-            model: "gpt-5-mini-2025-08-07",
+            model: AppSecrets.openAIModel,
             input: [
                 .init(role: "system", content: [.init(type: "input_text", text: outreachSystemPrompt)]),
                 .init(role: "user", content: [.init(type: "input_text", text: buildOutreachPrompt(card: card, context: context))])
@@ -106,6 +70,22 @@ final class OpenAIService {
             )
         )
 
+        let decoded = try await sendResponsesRequest(payload, proxyURL: proxyURL)
+        guard let jsonText = decoded.outputText ?? decoded.outputMessageText else {
+            throw OpenAIServiceError.invalidResponse
+        }
+
+        return try decodeJSONPayload(OutreachSuggestionsEnvelope.self, from: jsonText).suggestions
+    }
+
+    private func sendResponsesRequest(_ payload: OpenAIResponseRequest, proxyURL: String) async throws -> OpenAIResponseEnvelope {
+        guard let url = URL(string: proxyURL) else {
+            throw OpenAIServiceError.missingProxyURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(payload)
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -115,19 +95,14 @@ final class OpenAIService {
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let apiError = try? JSONDecoder().decode(OpenAIAPIErrorEnvelope.self, from: data)
-            throw OpenAIServiceError.serverError(apiError?.error.message ?? "OpenAI API 呼叫失敗。")
+            throw OpenAIServiceError.serverError(apiError?.error.message ?? "AI 呼叫失敗。")
         }
 
-        let decoded = try JSONDecoder().decode(OpenAIResponseEnvelope.self, from: data)
-        let jsonText = decoded.outputText ?? decoded.outputMessageText
+        return try JSONDecoder().decode(OpenAIResponseEnvelope.self, from: data)
+    }
 
-        guard let jsonText,
-              let jsonData = jsonText.data(using: .utf8)
-        else {
-            throw OpenAIServiceError.invalidResponse
-        }
-
-        return try JSONDecoder().decode(OutreachSuggestionsEnvelope.self, from: jsonData)
+    private func resolvedProxyURL() -> String {
+        AppSecrets.aiProxyBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var systemPrompt: String {
@@ -212,6 +187,14 @@ final class OpenAIService {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private func decodeJSONPayload<T: Decodable>(_ type: T.Type, from text: String) throws -> T {
+        guard let data = text.data(using: .utf8) else {
+            throw OpenAIServiceError.invalidResponse
+        }
+
+        return try JSONDecoder().decode(T.self, from: data)
     }
 }
 
@@ -298,20 +281,6 @@ private struct OpenAIParsedCard: Decodable {
         case address
     }
 
-    func toScannedCard(fallback: ScannedCard) -> ScannedCard {
-        var card = ScannedCard(
-            givenName: resolved(givenName, fallback: fallback.givenName),
-            familyName: resolved(familyName, fallback: fallback.familyName),
-            company: resolved(company, fallback: fallback.company),
-            jobTitle: resolved(jobTitle, fallback: fallback.jobTitle),
-            phoneNumbers: resolved(phoneNumbers, fallback: fallback.phoneNumbers),
-            emails: resolved(emails, fallback: fallback.emails),
-            address: resolved(address, fallback: fallback.address)
-        )
-        card.normalized()
-        return card
-    }
-
     static var jsonSchema: JSONValue {
         .object([
             "type": .string("object"),
@@ -343,13 +312,27 @@ private struct OpenAIParsedCard: Decodable {
         ])
     }
 
+    func toScannedCard(fallback: ScannedCard) -> ScannedCard {
+        var card = ScannedCard(
+            givenName: resolved(givenName, fallback: fallback.givenName),
+            familyName: resolved(familyName, fallback: fallback.familyName),
+            company: resolved(company, fallback: fallback.company),
+            jobTitle: resolved(jobTitle, fallback: fallback.jobTitle),
+            phoneNumbers: resolved(phoneNumbers, fallback: fallback.phoneNumbers),
+            emails: resolved(emails, fallback: fallback.emails),
+            address: resolved(address, fallback: fallback.address)
+        )
+        card.normalized()
+        return card
+    }
+
     private func resolved(_ value: String, fallback: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? fallback : trimmed
     }
 
     private func resolved(_ values: [OpenAIParsedValue], fallback: [LabeledValue]) -> [LabeledValue] {
-        let mapped = values.compactMap(\.toLabeledValue)
+        let mapped = values.compactMap { $0.toLabeledValue() }
         return mapped.isEmpty ? fallback : mapped
     }
 }
@@ -388,9 +371,7 @@ private struct OutreachSuggestionsEnvelope: Decodable {
                     ])
                 ])
             ]),
-            "required": .array([
-                .string("suggestions")
-            ])
+            "required": .array([.string("suggestions")])
         ])
     }
 }
@@ -398,15 +379,6 @@ private struct OutreachSuggestionsEnvelope: Decodable {
 private struct OpenAIParsedValue: Decodable {
     let label: String
     let value: String
-
-    var toLabeledValue: LabeledValue? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return nil
-        }
-
-        return LabeledValue(kind: mapKind(label), value: trimmed)
-    }
 
     static var schema: JSONValue {
         .object([
@@ -423,8 +395,17 @@ private struct OpenAIParsedValue: Decodable {
         ])
     }
 
-    private func mapKind(_ label: String) -> LabeledValue.Kind {
-        switch label.lowercased() {
+    func toLabeledValue() -> LabeledValue? {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty else {
+            return nil
+        }
+
+        return LabeledValue(kind: mapKind(label), value: trimmedValue)
+    }
+
+    private func mapKind(_ rawValue: String) -> LabeledValue.Kind {
+        switch rawValue.lowercased() {
         case "mobile":
             return .mobile
         case "work":
@@ -439,7 +420,7 @@ private struct OpenAIParsedValue: Decodable {
     }
 }
 
-private enum JSONValue: Encodable {
+enum JSONValue: Encodable {
     case string(String)
     case bool(Bool)
     case object([String: JSONValue])
@@ -453,23 +434,23 @@ private enum JSONValue: Encodable {
         case .bool(let value):
             var container = encoder.singleValueContainer()
             try container.encode(value)
-        case .object(let value):
-            var container = encoder.container(keyedBy: JSONCodingKey.self)
-            for (key, nestedValue) in value {
-                try container.encode(nestedValue, forKey: JSONCodingKey(stringValue: key)!)
+        case .object(let dictionary):
+            var container = encoder.container(keyedBy: DynamicCodingKey.self)
+            for (key, value) in dictionary {
+                try container.encode(value, forKey: DynamicCodingKey(stringValue: key)!)
             }
-        case .array(let value):
+        case .array(let array):
             var container = encoder.unkeyedContainer()
-            for nestedValue in value {
-                try container.encode(nestedValue)
+            for value in array {
+                try container.encode(value)
             }
         }
     }
 }
 
-private struct JSONCodingKey: CodingKey {
-    let stringValue: String
-    let intValue: Int?
+private struct DynamicCodingKey: CodingKey {
+    var stringValue: String
+    var intValue: Int?
 
     init?(stringValue: String) {
         self.stringValue = stringValue

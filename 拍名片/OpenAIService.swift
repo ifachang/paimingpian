@@ -84,13 +84,22 @@ final class OpenAIService {
         }
 
         var request = URLRequest(url: url)
+        let installationID = InstallationIDStore.shared.load()
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(payload.text.format.name, forHTTPHeaderField: "X-AI-Feature")
+        if !installationID.isEmpty {
+            request.setValue(installationID, forHTTPHeaderField: "X-Installation-ID")
+        }
         request.httpBody = try JSONEncoder().encode(payload)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OpenAIServiceError.invalidResponse
+        }
+
+        if let assignedInstallationID = httpResponse.value(forHTTPHeaderField: "X-Installation-ID") {
+            InstallationIDStore.shared.save(assignedInstallationID)
         }
 
         guard (200 ..< 300).contains(httpResponse.statusCode) else {

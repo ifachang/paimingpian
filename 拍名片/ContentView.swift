@@ -38,6 +38,9 @@ struct ContentView: View {
     @State private var isEnhancingCard = false
     @State private var enhancementMessage = ""
     @State private var currentScanID = UUID()
+    @State private var homeHeroConfig: HomeHeroConfig?
+    @State private var didLoadHomeHeroConfig = false
+    @State private var currentHeroIndex = 0
     private let isProUnlocked = true
 
     private let contactStoreService = ContactStoreService()
@@ -80,6 +83,9 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        .task {
+            await loadHomeHeroConfigIfNeeded()
         }
         .sheet(isPresented: $isShowingCamera) {
             ImagePicker(sourceType: .camera) { image in
@@ -285,6 +291,14 @@ struct ContentView: View {
         } message: {
             Text(noticeMessage)
         }
+    }
+
+    @MainActor
+    private func loadHomeHeroConfigIfNeeded() async {
+        guard !didLoadHomeHeroConfig else { return }
+        didLoadHomeHeroConfig = true
+        homeHeroConfig = await HomeHeroService.shared.fetchConfig()
+        currentHeroIndex = 0
     }
 
     private var homeView: some View {
@@ -547,6 +561,16 @@ struct ContentView: View {
             .buttonStyle(PrimaryButtonStyle())
             .padding(.top, 12)
 
+            Button("回到首頁") {
+                resetFlow()
+            }
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
             Button("顯示我的電子名片 QR") {
                 isShowingMyCardSheet = true
             }
@@ -751,71 +775,136 @@ struct ContentView: View {
     }
 
     private var homeIllustration: some View {
-        Link(destination: URL(string: "https://wowo.one")!) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.98, green: 0.83, blue: 0.47),
-                                Color(red: 0.95, green: 0.72, blue: 0.33)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+        let heroItems = homeHeroConfig?.items ?? []
 
-                Circle()
-                    .fill(.white.opacity(0.18))
-                    .frame(width: 180, height: 180)
-                    .offset(x: -90, y: -50)
-
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(.white)
-                    .frame(width: 220, height: 160)
-                    .rotationEffect(.degrees(-8))
-                    .offset(x: -28, y: 10)
-                    .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
-
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(red: 0.12, green: 0.13, blue: 0.15))
-                    .frame(width: 220, height: 160)
-                    .rotationEffect(.degrees(8))
-                    .offset(x: 44, y: 4)
-                    .shadow(color: .black.opacity(0.1), radius: 18, y: 10)
-
-                VStack(spacing: 8) {
-                    Circle()
-                        .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
-                        .frame(width: 40, height: 40)
-
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
-                        .frame(width: 72, height: 34)
+        return Group {
+            if homeHeroConfig?.usesCarousel == true, !heroItems.isEmpty {
+                TabView(selection: $currentHeroIndex) {
+                    ForEach(Array(heroItems.enumerated()), id: \.offset) { index, item in
+                        heroIllustrationLink(for: item) {
+                            remoteHomeIllustration(url: item.imageURL)
+                        }
+                        .tag(index)
+                    }
                 }
-                .offset(x: -58, y: 8)
+                .tabViewStyle(.page(indexDisplayMode: .automatic))
+                .frame(height: 236)
+                .task(id: heroItems.map(\.id).joined(separator: "|")) {
+                    guard homeHeroConfig?.usesCarousel == true, heroItems.count > 1 else { return }
 
-                VStack(alignment: .leading, spacing: 10) {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white)
-                        .frame(width: 88, height: 12)
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white.opacity(0.75))
-                        .frame(width: 62, height: 10)
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white.opacity(0.45))
-                        .frame(width: 106, height: 10)
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(4))
+                        guard !Task.isCancelled, homeHeroConfig?.usesCarousel == true, heroItems.count > 1 else { break }
+
+                        await MainActor.run {
+                            withAnimation(.easeInOut(duration: 0.35)) {
+                                currentHeroIndex = (currentHeroIndex + 1) % heroItems.count
+                            }
+                        }
+                    }
                 }
-                .offset(x: 72, y: 6)
-
-                Image("WoWoLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 118, height: 118)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
-                    .offset(x: 76, y: -54)
+            } else if let firstItem = heroItems.first {
+                heroIllustrationLink(for: firstItem) {
+                    remoteHomeIllustration(url: firstItem.imageURL)
+                }
+            } else {
+                heroIllustrationLink(for: nil) {
+                    fallbackHomeIllustration
+                }
             }
+        }
+    }
+
+    private func remoteHomeIllustration(url: URL) -> some View {
+        AsyncImage(url: url) { phase in
+            switch phase {
+            case .success(let image):
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
+            default:
+                fallbackHomeIllustration
+            }
+        }
+    }
+
+    private func heroIllustrationLink<Content: View>(for item: HomeHeroItem?, @ViewBuilder content: () -> Content) -> some View {
+        let linkURL = item?.linkURL ?? homeHeroConfig?.linkURL ?? URL(string: "https://wowo.one")!
+
+        return Link(destination: linkURL) {
+            content()
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var fallbackHomeIllustration: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.98, green: 0.83, blue: 0.47),
+                            Color(red: 0.95, green: 0.72, blue: 0.33)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            Circle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 180, height: 180)
+                .offset(x: -90, y: -50)
+
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.white)
+                .frame(width: 220, height: 160)
+                .rotationEffect(.degrees(-8))
+                .offset(x: -28, y: 10)
+                .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
+
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color(red: 0.12, green: 0.13, blue: 0.15))
+                .frame(width: 220, height: 160)
+                .rotationEffect(.degrees(8))
+                .offset(x: 44, y: 4)
+                .shadow(color: .black.opacity(0.1), radius: 18, y: 10)
+
+            VStack(spacing: 8) {
+                Circle()
+                    .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
+                    .frame(width: 40, height: 40)
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(red: 0.84, green: 0.63, blue: 0.22))
+                    .frame(width: 72, height: 34)
+            }
+            .offset(x: -58, y: 8)
+
+            VStack(alignment: .leading, spacing: 10) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.white)
+                    .frame(width: 88, height: 12)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.white.opacity(0.75))
+                    .frame(width: 62, height: 10)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.white.opacity(0.45))
+                    .frame(width: 106, height: 10)
+            }
+            .offset(x: 72, y: 6)
+
+            Image("WoWoLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 118, height: 118)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
+                .offset(x: 76, y: -54)
         }
         .frame(height: 220)
     }
@@ -1224,21 +1313,21 @@ private struct ProUpgradeView: View {
                         Text("AI 功能")
                             .font(.largeTitle.bold())
 
-                        Text("本 App 會先進行本地 OCR，再於需要時連到後台 thin proxy，由後台代為呼叫 AI 模型。使用者不需要另外輸入 API Key。")
+                        Text("本 App 會先進行本地 OCR；需要時會自動呼叫後台的 Yushan AI 模型，使用者不需要另外輸入 API Key。")
                             .font(.body)
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
                         FeatureRow(title: "本地基礎能力", detail: "本地 OCR、基本欄位整理、手動修改、存入聯絡人")
-                        FeatureRow(title: "AI 智慧功能", detail: "複雜名片會自動交給後台 AI 補強整理，並可生成聯絡訊息")
+                        FeatureRow(title: "AI 智慧功能", detail: "複雜名片會在需要時自動交由後台的 Yushan AI 模型補強整理，並可生成聯絡訊息")
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("目前狀態")
                             .font(.headline)
 
-                        Text(isAIReady ? "目前已連結後台 AI 服務，使用者可直接使用智慧辨識與聯絡建議功能。" : "目前尚未設定後台 AI 服務網址，AI 智慧功能暫時不會啟用。")
+                        Text(isAIReady ? "目前已可使用 Yushan AI 智慧辨識與聯絡建議功能。" : "目前尚未完成 Yushan AI 服務設定，AI 智慧功能暫時不會啟用。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -1247,7 +1336,7 @@ private struct ProUpgradeView: View {
                         Text("原型說明")
                             .font(.headline)
 
-                        Text("目前採用 thin proxy 架構，由後台保存模型金鑰並代呼叫 AI。這樣使用者不需要管理 API Key，也更容易控制成本與限額。")
+                        Text("目前的 AI 功能由後台的 Yushan AI 服務提供。這樣使用者不需要管理 API Key，也能在需要時自動取得更完整的名片整理結果。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

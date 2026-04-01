@@ -12,9 +12,11 @@ struct ContentView: View {
         case home
         case loading
         case review
+        case preContactSave
         case success
     }
 
+    @Environment(\.openURL) private var openURL
     @State private var screen: Screen = .home
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var scannedCard = ScannedCard()
@@ -64,6 +66,8 @@ struct ContentView: View {
                     loadingView
                 case .review:
                     reviewView
+                case .preContactSave:
+                    preContactSaveView
                 case .success:
                     successView
                 }
@@ -286,7 +290,7 @@ struct ContentView: View {
         } message: {
             Text(errorMessage)
         }
-        .alert("已改用基本辨識", isPresented: $isShowingNotice) {
+        .alert("提醒", isPresented: $isShowingNotice) {
             Button("知道了", role: .cancel) {}
         } message: {
             Text(noticeMessage)
@@ -470,9 +474,16 @@ struct ContentView: View {
 
     private var reviewView: some View {
         VStack(spacing: 24) {
-            Text("幫你整理好了")
-                .font(.title2.bold())
-                .frame(maxWidth: .infinity, alignment: .center)
+            VStack(spacing: 8) {
+                Text("已幫你整理好名片")
+                    .font(.title2.bold())
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Text("確認後即可存入手機通訊錄")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
 
             VStack(spacing: 12) {
                 VStack(spacing: 6) {
@@ -513,10 +524,14 @@ struct ContentView: View {
                         .stroke(Color(.separator), lineWidth: 1)
                 )
 
-                Button("存入聯絡人") {
-                    saveContact()
+                Button("儲存聯絡人") {
+                    screen = .preContactSave
                 }
                 .buttonStyle(PrimaryButtonStyle())
+
+                Text("可隨時編輯")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
 
                 Button("修改") {
                     isShowingEditor = true
@@ -539,30 +554,85 @@ struct ContentView: View {
                 resetFlow()
             }
             .foregroundStyle(.secondary)
+
+            Button("回到首頁") {
+                resetFlow()
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var preContactSaveView: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 64, weight: .regular))
+                .foregroundStyle(.orange)
+
+            VStack(spacing: 10) {
+                Text("將名片加入你的手機")
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
+
+                Text("我們只會新增這一筆聯絡人")
+                    .font(.body.weight(.semibold))
+                    .multilineTextAlignment(.center)
+
+                Text("不會讀取或上傳你的其他通訊錄資料")
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.red.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                Text("你的資料只存在你的裝置。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 12) {
+                Button("繼續儲存") {
+                    saveContact()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+
+                Button("先不要") {
+                    screen = .review
+                }
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
         }
     }
 
     private var successView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
             Spacer()
 
-            Text("已存入聯絡人")
+            Text("已成功加入聯絡人 🎉")
                 .font(.title2.bold())
 
             Text(savedName)
                 .font(.title3)
 
-            Text("已加入你的聯絡人")
+            Text("下次掃描會更快")
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
 
-            Button("再拍一張") {
+            Button("繼續掃描") {
                 resetFlow()
             }
             .buttonStyle(PrimaryButtonStyle())
             .padding(.top, 12)
 
-            Button("回到首頁") {
-                resetFlow()
+            Button("查看聯絡人") {
+                openContactsApp()
             }
             .font(.headline)
             .foregroundStyle(.primary)
@@ -570,6 +640,12 @@ struct ContentView: View {
             .padding(.vertical, 16)
             .background(Color(.secondarySystemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            Button("回首頁") {
+                resetFlow()
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
 
             Button("顯示我的電子名片 QR") {
                 isShowingMyCardSheet = true
@@ -719,6 +795,18 @@ struct ContentView: View {
                 showError(error)
             }
         }
+    }
+
+    private func openContactsApp() {
+        let possibleURLs = ["contacts://", "addressbook://"].compactMap(URL.init(string:))
+
+        for url in possibleURLs where UIApplication.shared.canOpenURL(url) {
+            openURL(url)
+            return
+        }
+
+        noticeMessage = "目前無法直接打開聯絡人 App，你也可以稍後在手機通訊錄中查看。"
+        isShowingNotice = true
     }
 
     private func resetFlow() {
@@ -1310,7 +1398,7 @@ private struct ProUpgradeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("AI 功能")
+                        Text("AI 功能已內建")
                             .font(.largeTitle.bold())
 
                         Text("本 App 會先進行本地 OCR；需要時會自動呼叫後台的 Yushan AI 模型，使用者不需要另外輸入 API Key。")

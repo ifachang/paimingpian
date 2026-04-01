@@ -88,6 +88,7 @@ final class OpenAIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(payload.text.format.name, forHTTPHeaderField: "X-AI-Feature")
+        request.setValue("ios", forHTTPHeaderField: "X-Client-Platform")
         if !installationID.isEmpty {
             request.setValue(installationID, forHTTPHeaderField: "X-Installation-ID")
         }

@@ -6,7 +6,7 @@ enum ContactStoreServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessDenied:
-            return "沒有聯絡人權限，請到系統設定允許存取聯絡人。"
+            return "目前無法新增聯絡人，請到系統設定允許聯絡人權限。"
         }
     }
 }

@@ -25,6 +25,7 @@
 		A0000000000000000000003A /* MyDigitalCardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003B /* MyDigitalCardStore.swift */; };
 		A0000000000000000000003C /* InstallationIDStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003D /* InstallationIDStore.swift */; };
 		A0000000000000000000003E /* HomeHeroService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003F /* HomeHeroService.swift */; };
+		A00000000000000000000040 /* RelationshipAnalysisStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000041 /* RelationshipAnalysisStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		A0000000000000000000003B /* MyDigitalCardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyDigitalCardStore.swift; sourceTree = "<group>"; };
 		A0000000000000000000003D /* InstallationIDStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallationIDStore.swift; sourceTree = "<group>"; };
 		A0000000000000000000003F /* HomeHeroService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeHeroService.swift; sourceTree = "<group>"; };
+		A00000000000000000000041 /* RelationshipAnalysisStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelationshipAnalysisStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +90,7 @@
 				A0000000000000000000003B /* MyDigitalCardStore.swift */,
 				A0000000000000000000003D /* InstallationIDStore.swift */,
 				A0000000000000000000003F /* HomeHeroService.swift */,
+				A00000000000000000000041 /* RelationshipAnalysisStore.swift */,
 				A00000000000000000000018 /* Assets.xcassets */,
 				A0000000000000000000001F /* Preview Content */,
 				A0000000000000000000001A /* Info.plist */,
@@ -197,6 +200,7 @@
 				A0000000000000000000003A /* MyDigitalCardStore.swift in Sources */,
 				A0000000000000000000003C /* InstallationIDStore.swift in Sources */,
 				A0000000000000000000003E /* HomeHeroService.swift in Sources */,
+				A00000000000000000000040 /* RelationshipAnalysisStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

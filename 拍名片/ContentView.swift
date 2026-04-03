@@ -8,6 +8,15 @@ struct ContentView: View {
         case pro
     }
 
+    private enum RelationshipGoal: String, CaseIterable, Identifiable {
+        case client = "開發客戶"
+        case partnership = "找合作機會"
+        case investor = "找資源或投資"
+        case network = "建立長期關係"
+
+        var id: String { rawValue }
+    }
+
     private enum Screen {
         case home
         case loading
@@ -30,6 +39,7 @@ struct ContentView: View {
     @State private var isShowingProSheet = false
     @State private var isShowingMyCardSheet = false
     @State private var isShowingQRScanner = false
+    @State private var isShowingPeopleSearch = false
     @State private var myDigitalCard = MyDigitalCardStore.shared.load()
     @State private var noticeMessage = ""
     @State private var isShowingNotice = false
@@ -37,6 +47,15 @@ struct ContentView: View {
     @State private var outreachSuggestions: [OutreachSuggestion] = []
     @State private var isGeneratingOutreach = false
     @State private var copiedSuggestionID: String?
+    @State private var relationshipGoal: RelationshipGoal = .network
+    @State private var relationshipAnalysisContext = ""
+    @State private var relationshipAnalysis: RelationshipValueAnalysis?
+    @State private var isAnalyzingRelationship = false
+    @State private var savedRelationshipAnalyses = RelationshipAnalysisStore.shared.load()
+    @State private var peopleSearchQuery = ""
+    @State private var peopleSearchResults: [PeopleSearchResultCard] = []
+    @State private var peopleSearchSummary = ""
+    @State private var isSearchingPeople = false
     @State private var isEnhancingCard = false
     @State private var enhancementMessage = ""
     @State private var currentScanID = UUID()
@@ -254,6 +273,8 @@ struct ContentView: View {
                     },
                     onImport: { importedCard in
                         scannedCard = importedCard
+                        relationshipAnalysis = nil
+                        relationshipAnalysisContext = ""
                         outreachSuggestions = []
                         copiedSuggestionID = nil
                         isShowingQRScanner = false
@@ -264,6 +285,22 @@ struct ContentView: View {
                     onFailure: { error in
                         isShowingQRScanner = false
                         showError(error)
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $isShowingPeopleSearch) {
+            NavigationStack {
+                PeopleSearchView(
+                    query: $peopleSearchQuery,
+                    results: $peopleSearchResults,
+                    summary: $peopleSearchSummary,
+                    isSearching: $isSearchingPeople,
+                    onSearch: {
+                        searchPeople()
+                    },
+                    onClose: {
+                        isShowingPeopleSearch = false
                     }
                 )
             }
@@ -313,7 +350,7 @@ struct ContentView: View {
 
             VStack(spacing: 12) {
                 HStack(spacing: 8) {
-                    Text("拍名片")
+                    Text("Wo名片")
                         .font(.largeTitle.bold())
 
                     Text("AI")
@@ -332,6 +369,16 @@ struct ContentView: View {
             }
 
             VStack(spacing: 12) {
+                Button("小Wo找人") {
+                    isShowingPeopleSearch = true
+                }
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                 Button("我的電子名片") {
                     isShowingMyCardSheet = true
                 }
@@ -342,7 +389,7 @@ struct ContentView: View {
                 .background(Color(.secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                Button("拍一張") {
+                Button("掃描名片") {
                     isShowingCamera = true
                 }
                 .buttonStyle(PrimaryButtonStyle())
@@ -466,100 +513,106 @@ struct ContentView: View {
             ProgressView()
                 .progressViewStyle(.circular)
                 .scaleEffect(1.2)
-            Text("正在辨識名片...")
+            Text("Wo名片正在辨識中...")
                 .font(.headline)
             Spacer()
         }
     }
 
     private var reviewView: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 8) {
-                Text("已幫你整理好名片")
-                    .font(.title2.bold())
-                    .frame(maxWidth: .infinity, alignment: .center)
+        ScrollView {
+            VStack(spacing: 24) {
+                VStack(spacing: 8) {
+                    Text("Wo名片已幫你整理完成")
+                        .font(.title2.bold())
+                        .frame(maxWidth: .infinity, alignment: .center)
 
-                Text("確認後即可存入手機通訊錄")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
-            VStack(spacing: 12) {
-                VStack(spacing: 6) {
-                    Text(scannedCard.displayName)
-                        .font(.title3.bold())
+                    Text("確認後即可存入手機通訊錄")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                }
 
-                    if !scannedCard.company.isEmpty {
-                        Text(scannedCard.company)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !scannedCard.jobTitle.isEmpty {
-                        Text(scannedCard.jobTitle)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(scannedCard.phoneNumbers.filter { !$0.isEmpty }) { phone in
-                        Text("\(phone.kind.displayName)｜\(phone.value)")
-                    }
-
-                    ForEach(scannedCard.emails.filter { !$0.isEmpty }) { email in
-                        Text("\(email.kind.displayName)｜\(email.value)")
-                    }
-
-                    if !scannedCard.address.isEmpty {
-                        Text(scannedCard.address)
-                            .foregroundStyle(.secondary)
+                VStack(spacing: 12) {
+                    VStack(spacing: 6) {
+                        Text(scannedCard.displayName)
+                            .font(.title3.bold())
                             .multilineTextAlignment(.center)
+
+                        if !scannedCard.company.isEmpty {
+                            Text(scannedCard.company)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !scannedCard.jobTitle.isEmpty {
+                            Text(scannedCard.jobTitle)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        ForEach(scannedCard.phoneNumbers.filter { !$0.isEmpty }) { phone in
+                            Text("\(phone.kind.displayName)｜\(phone.value)")
+                        }
+
+                        ForEach(scannedCard.emails.filter { !$0.isEmpty }) { email in
+                            Text("\(email.kind.displayName)｜\(email.value)")
+                        }
+
+                        if !scannedCard.address.isEmpty {
+                            Text(scannedCard.address)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(24)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color(.separator), lineWidth: 1)
-                )
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(Color(.separator), lineWidth: 1)
+                    )
 
-                Button("儲存聯絡人") {
-                    screen = .preContactSave
-                }
-                .buttonStyle(PrimaryButtonStyle())
+                    Button("儲存聯絡人") {
+                        screen = .preContactSave
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
 
-                Text("可隨時編輯")
-                    .font(.footnote)
+                    Text("可隨時編輯")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Button("修改") {
+                        isShowingEditor = true
+                    }
                     .foregroundStyle(.secondary)
 
-                Button("修改") {
-                    isShowingEditor = true
+                    Button("顯示我的電子名片 QR") {
+                        isShowingMyCardSheet = true
+                    }
+                    .foregroundStyle(.secondary)
+                }
+
+                if isEnhancingCard {
+                    enhancementBanner
+                }
+
+                relationshipAnalysisSection
+
+                outreachSection
+
+                Button("重新開始") {
+                    resetFlow()
                 }
                 .foregroundStyle(.secondary)
 
-                Button("顯示我的電子名片 QR") {
-                    isShowingMyCardSheet = true
+                Button("回到首頁") {
+                    resetFlow()
                 }
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             }
-
-            if isEnhancingCard {
-                enhancementBanner
-            }
-
-            outreachSection
-
-            Button("重新開始") {
-                resetFlow()
-            }
-            .foregroundStyle(.secondary)
-
-            Button("回到首頁") {
-                resetFlow()
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 24)
         }
     }
 
@@ -572,7 +625,7 @@ struct ContentView: View {
                 .foregroundStyle(.orange)
 
             VStack(spacing: 10) {
-                Text("將名片加入你的手機")
+                Text("將這張名片加入手機")
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
 
@@ -685,6 +738,8 @@ struct ContentView: View {
 
                 currentScanID = scanID
                 scannedCard = localCard
+                relationshipAnalysis = nil
+                relationshipAnalysisContext = ""
                 outreachSuggestions = []
                 copiedSuggestionID = nil
                 isEnhancingCard = false
@@ -814,6 +869,14 @@ struct ContentView: View {
         scannedCard = ScannedCard()
         savedName = ""
         cardCandidates = []
+        relationshipGoal = .network
+        relationshipAnalysisContext = ""
+        relationshipAnalysis = nil
+        isAnalyzingRelationship = false
+        peopleSearchQuery = ""
+        peopleSearchResults = []
+        peopleSearchSummary = ""
+        isSearchingPeople = false
         outreachContext = ""
         outreachSuggestions = []
         copiedSuggestionID = nil
@@ -831,7 +894,7 @@ struct ContentView: View {
     private var homeSubtitle: String {
         switch planTier {
         case .free:
-            return "拍一張或選一張名片照片，快速存進聯絡人。"
+            return "掃描一張或選一張名片照片，快速存進聯絡人。"
         case .pro:
             return isProLLMReady
                 ? "會先做本地 OCR，遇到較複雜的名片時再由後台 AI 補強整理。"
@@ -1037,6 +1100,170 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
+    private var relationshipAnalysisSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("人脈價值分析")
+                .font(.headline)
+
+            Text("選一個你的目標，AI 會幫你分析這位聯絡人的合作潛力、優先級與建議跟進方式。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Picker("分析目標", selection: $relationshipGoal) {
+                ForEach(RelationshipGoal.allCases) { goal in
+                    Text(goal.rawValue).tag(goal)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            TextField("補充背景（選填），例如：在展會聊過跨境電商、對方提到想找品牌合作", text: $relationshipAnalysisContext, axis: .vertical)
+                .lineLimit(2...4)
+                .editorFieldStyle()
+
+            if isProLLMReady {
+                Button(isAnalyzingRelationship ? "分析中..." : "幫我分析") {
+                    generateRelationshipAnalysis()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isAnalyzingRelationship)
+            } else {
+                Button("啟用 AI 以分析人脈價值") {
+                    isShowingProSheet = true
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+
+            if let relationshipAnalysis {
+                relationshipDecisionCard(analysis: relationshipAnalysis)
+                relationshipInsightCard(analysis: relationshipAnalysis)
+            }
+
+            if !savedRelationshipAnalyses.isEmpty {
+                recentRelationshipAnalysesSection
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func relationshipDecisionCard(analysis: RelationshipValueAnalysis) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(decisionCardTitle(for: analysis.priority))
+                        .font(.title3.bold())
+                        .foregroundStyle(.white)
+
+                    Text(analysis.headline)
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.96))
+
+                    Text(analysis.summary)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.86))
+                }
+
+                Spacer()
+
+                Image(systemName: decisionCardIcon(for: analysis.priority))
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(12)
+                    .background(.white.opacity(0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            HStack(spacing: 10) {
+                decisionMetric(title: "目前判斷", value: priorityBadgeTitle(analysis.priority))
+                decisionMetric(title: "你的目標", value: relationshipGoal.rawValue)
+                decisionMetric(title: "建議節奏", value: decisionCadence(for: analysis.priority))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background(
+            LinearGradient(
+                colors: decisionCardColors(for: analysis.priority),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func relationshipInsightCard(analysis: RelationshipValueAnalysis) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            analysisGroup(
+                title: "這個人可能的價值",
+                items: analysis.valueReasons,
+                icon: "sparkles.rectangle.stack.fill"
+            )
+
+            analysisGroup(
+                title: "可發展的機會",
+                items: analysis.opportunities,
+                icon: "arrow.triangle.branch"
+            )
+
+            insightRow(
+                title: "建議下一步",
+                body: analysis.nextAction,
+                icon: "figure.walk.motion"
+            )
+
+            insightRow(
+                title: "提醒",
+                body: analysis.caution,
+                icon: "exclamationmark.bubble"
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var recentRelationshipAnalysesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("最近分析")
+                .font(.subheadline.weight(.semibold))
+
+            ForEach(savedRelationshipAnalyses.prefix(3)) { item in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(item.card.displayName)
+                            .font(.subheadline.weight(.semibold))
+
+                        Spacer()
+
+                        Text(priorityBadgeTitle(item.analysis.priority))
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(priorityBadgeColor(item.analysis.priority).opacity(0.14))
+                            .foregroundStyle(priorityBadgeColor(item.analysis.priority))
+                            .clipShape(Capsule())
+                    }
+
+                    Text([item.card.company, item.goal].filter { !$0.isEmpty }.joined(separator: "・"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Text(item.analysis.headline)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
+        .padding(16)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
     private var outreachSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("聯絡建議")
@@ -1122,6 +1349,307 @@ struct ContentView: View {
         }
     }
 
+    private func generateRelationshipAnalysis() {
+        guard isProLLMReady else {
+            isShowingProSheet = true
+            return
+        }
+
+        isAnalyzingRelationship = true
+
+        Task {
+            do {
+                relationshipAnalysis = try await openAIService.analyzeRelationshipValue(
+                    card: scannedCard,
+                    goal: relationshipGoal.rawValue,
+                    context: relationshipAnalysisContext
+                )
+                if let relationshipAnalysis {
+                    savedRelationshipAnalyses = RelationshipAnalysisStore.shared.save(
+                        goal: relationshipGoal.rawValue,
+                        card: scannedCard,
+                        analysis: relationshipAnalysis
+                    )
+                }
+            } catch {
+                noticeMessage = "人脈價值分析失敗，請稍後再試。"
+                isShowingNotice = true
+            }
+
+            isAnalyzingRelationship = false
+        }
+    }
+
+    private func searchPeople() {
+        let trimmedQuery = peopleSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            peopleSearchSummary = "請先輸入你想找的人脈條件。"
+            peopleSearchResults = []
+            return
+        }
+
+        isSearchingPeople = true
+
+        Task {
+            defer { isSearchingPeople = false }
+
+            do {
+                let contacts = try await contactStoreService.fetchSearchableContacts()
+                let candidates = quickFilterContacts(contacts, query: trimmedQuery)
+
+                guard !candidates.isEmpty else {
+                    await MainActor.run {
+                        peopleSearchSummary = "我暫時找不到明顯符合「\(trimmedQuery)」的人脈。"
+                        peopleSearchResults = []
+                    }
+                    return
+                }
+
+                if isProLLMReady {
+                    let aiRecommendations = try await openAIService.rerankContactsForPeopleSearch(
+                        query: trimmedQuery,
+                        candidates: Array(candidates.prefix(20))
+                    )
+
+                    let mapped = aiRecommendations.map { recommendation in
+                        let matched = candidates.first(where: { $0.id == recommendation.id })
+                        return PeopleSearchResultCard(
+                            id: recommendation.id,
+                            name: recommendation.name,
+                            company: recommendation.company.isEmpty ? (matched?.displayCompany ?? "未提供公司") : recommendation.company,
+                            reason: recommendation.reason,
+                            email: matched?.email ?? "",
+                            jobTitle: matched?.jobTitle ?? ""
+                        )
+                    }
+
+                    await MainActor.run {
+                        peopleSearchSummary = "我幫你找到 \(mapped.count) 位可能的人👇"
+                        peopleSearchResults = mapped
+                    }
+                } else {
+                    let localResults = Array(candidates.prefix(3)).map { contact in
+                        PeopleSearchResultCard(
+                            id: contact.id,
+                            name: contact.name,
+                            company: contact.displayCompany,
+                            reason: localMatchReason(for: contact, query: trimmedQuery),
+                            email: contact.email,
+                            jobTitle: contact.jobTitle
+                        )
+                    }
+
+                    await MainActor.run {
+                        peopleSearchSummary = "我先幫你找到 \(localResults.count) 位可能的人👇"
+                        peopleSearchResults = localResults
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    peopleSearchSummary = "找人脈時發生問題，請稍後再試。"
+                    peopleSearchResults = []
+                    showError(error)
+                }
+            }
+        }
+    }
+
+    private func quickFilterContacts(_ contacts: [SearchableContact], query: String) -> [SearchableContact] {
+        let normalizedQuery = query.lowercased()
+        let tokens = normalizedQuery
+            .split { $0 == " " || $0 == "　" || $0 == "," || $0 == "，" }
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        let scored: [(SearchableContact, Int)] = contacts.compactMap { contact in
+            let haystacks = [
+                contact.name.lowercased(),
+                contact.company.lowercased(),
+                contact.email.lowercased(),
+                contact.jobTitle.lowercased(),
+                emailDomain(from: contact.email),
+            ]
+
+            var score = 0
+
+            if haystacks.contains(where: { $0.contains(normalizedQuery) }) {
+                score += 6
+            }
+
+            for token in tokens {
+                if contact.company.lowercased().contains(token) { score += 4 }
+                if contact.jobTitle.lowercased().contains(token) { score += 4 }
+                if emailDomain(from: contact.email).contains(token) { score += 3 }
+                if contact.name.lowercased().contains(token) { score += 2 }
+                if contact.email.lowercased().contains(token) { score += 2 }
+            }
+
+            guard score > 0 else { return nil }
+            return (contact, score)
+        }
+
+        return scored
+            .sorted {
+                if $0.1 == $1.1 {
+                    return $0.0.name < $1.0.name
+                }
+                return $0.1 > $1.1
+            }
+            .map(\.0)
+    }
+
+    private func emailDomain(from email: String) -> String {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let atIndex = trimmed.firstIndex(of: "@") else { return "" }
+        return String(trimmed[trimmed.index(after: atIndex)...])
+    }
+
+    private func localMatchReason(for contact: SearchableContact, query: String) -> String {
+        let loweredQuery = query.lowercased()
+
+        if !contact.jobTitle.isEmpty, contact.jobTitle.lowercased().contains(loweredQuery) {
+            return "職稱與你要找的條件相近。"
+        }
+
+        if !contact.company.isEmpty, contact.company.lowercased().contains(loweredQuery) {
+            return "公司名稱與你的需求高度相關。"
+        }
+
+        if emailDomain(from: contact.email).contains(loweredQuery) {
+            return "Email 網域看起來和這個領域有關。"
+        }
+
+        return "目前是根據名字、公司或職稱的關鍵字相似度推薦。"
+    }
+
+    @ViewBuilder
+    private func analysisGroup(title: String, items: [String], icon: String) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(title, systemImage: icon)
+                    .font(.subheadline.weight(.semibold))
+
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 6)
+
+                        Text(item)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func insightRow(title: String, body: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+
+            Text(body)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func decisionMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.72))
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.white.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func priorityBadgeTitle(_ priority: String) -> String {
+        switch priority.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "high", "高", "高優先":
+            return "高優先"
+        case "medium", "中", "中優先":
+            return "值得維護"
+        default:
+            return "先觀察"
+        }
+    }
+
+    private func priorityBadgeColor(_ priority: String) -> Color {
+        switch priority.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "high", "高", "高優先":
+            return .red
+        case "medium", "中", "中優先":
+            return .orange
+        default:
+            return .gray
+        }
+    }
+
+    private func decisionCardTitle(for priority: String) -> String {
+        switch normalizedPriority(priority) {
+        case "high":
+            return "值得馬上跟進"
+        case "medium":
+            return "適合長期維護"
+        default:
+            return "先觀察比較好"
+        }
+    }
+
+    private func decisionCadence(for priority: String) -> String {
+        switch normalizedPriority(priority) {
+        case "high":
+            return "今天就聯絡"
+        case "medium":
+            return "一週內維護"
+        default:
+            return "先補資訊"
+        }
+    }
+
+    private func decisionCardIcon(for priority: String) -> String {
+        switch normalizedPriority(priority) {
+        case "high":
+            return "bolt.fill"
+        case "medium":
+            return "leaf.fill"
+        default:
+            return "hourglass"
+        }
+    }
+
+    private func decisionCardColors(for priority: String) -> [Color] {
+        switch normalizedPriority(priority) {
+        case "high":
+            return [Color(red: 0.93, green: 0.36, blue: 0.23), Color(red: 0.72, green: 0.14, blue: 0.17)]
+        case "medium":
+            return [Color(red: 0.94, green: 0.63, blue: 0.20), Color(red: 0.79, green: 0.42, blue: 0.10)]
+        default:
+            return [Color(red: 0.36, green: 0.42, blue: 0.49), Color(red: 0.19, green: 0.23, blue: 0.30)]
+        }
+    }
+
+    private func normalizedPriority(_ priority: String) -> String {
+        switch priority.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "high", "高", "高優先":
+            return "high"
+        case "medium", "中", "中優先":
+            return "medium"
+        default:
+            return "low"
+        }
+    }
+
     @ViewBuilder
     private func editorSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1129,6 +1657,137 @@ struct ContentView: View {
                 .font(.headline)
 
             content()
+        }
+    }
+}
+
+private struct PeopleSearchResultCard: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let company: String
+    let reason: String
+    let email: String
+    let jobTitle: String
+}
+
+private struct PeopleSearchView: View {
+    @Binding var query: String
+    @Binding var results: [PeopleSearchResultCard]
+    @Binding var summary: String
+    @Binding var isSearching: Bool
+    let onSearch: () -> Void
+    let onClose: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("小Wo找人")
+                    .font(.title2.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("一句話描述你要找的人脈，Wo名片會先幫你快速篩選，再挑出最相關的人。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            VStack(spacing: 12) {
+                TextField("例如：我需要找做 AI 的人", text: $query, axis: .vertical)
+                    .lineLimit(2...4)
+                    .editorFieldStyle()
+
+                Button(isSearching ? "小Wo搜尋中..." : "開始找人") {
+                    onSearch()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isSearching)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if !summary.isEmpty {
+                        Text(summary)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if results.isEmpty, !isSearching {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("你可以這樣問")
+                                .font(.subheadline.weight(.semibold))
+
+                            Text("我需要找做 AI 的人")
+                            Text("我認識誰在醫療通路？")
+                            Text("有沒有做品牌合作的人脈？")
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+
+                    ForEach(results) { result in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(result.name)
+                                        .font(.headline)
+
+                                    Text(result.company)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+
+                                    if !result.jobTitle.isEmpty {
+                                        Text(result.jobTitle)
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Spacer()
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("為什麼推薦")
+                                    .font(.subheadline.weight(.semibold))
+
+                                Text(result.reason)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            HStack {
+                                Spacer()
+
+                                Button("聯絡（即將推出）") {}
+                                    .font(.subheadline.weight(.semibold))
+                                    .disabled(true)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 16)
+            }
+        }
+        .padding(24)
+        .navigationTitle("小Wo找人")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("關閉") {
+                    onClose()
+                    dismiss()
+                }
+            }
         }
     }
 }

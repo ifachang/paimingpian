@@ -78,6 +78,66 @@ final class OpenAIService {
         return try decodeJSONPayload(OutreachSuggestionsEnvelope.self, from: jsonText).suggestions
     }
 
+    func analyzeRelationshipValue(card: ScannedCard, goal: String, context: String) async throws -> RelationshipValueAnalysis {
+        let proxyURL = resolvedProxyURL()
+        guard !proxyURL.isEmpty else {
+            throw OpenAIServiceError.missingProxyURL
+        }
+
+        let payload = OpenAIResponseRequest(
+            model: AppSecrets.openAIModel,
+            input: [
+                .init(role: "system", content: [.init(type: "input_text", text: relationshipAnalysisSystemPrompt)]),
+                .init(role: "user", content: [.init(type: "input_text", text: buildRelationshipAnalysisPrompt(card: card, goal: goal, context: context))])
+            ],
+            text: .init(
+                format: .init(
+                    type: "json_schema",
+                    name: "relationship_value_analysis",
+                    strict: true,
+                    schema: RelationshipValueAnalysis.jsonSchema
+                )
+            )
+        )
+
+        let decoded = try await sendResponsesRequest(payload, proxyURL: proxyURL)
+        guard let jsonText = decoded.outputText ?? decoded.outputMessageText else {
+            throw OpenAIServiceError.invalidResponse
+        }
+
+        return try decodeJSONPayload(RelationshipValueAnalysis.self, from: jsonText)
+    }
+
+    func rerankContactsForPeopleSearch(query: String, candidates: [SearchableContact]) async throws -> [PeopleSearchRecommendation] {
+        let proxyURL = resolvedProxyURL()
+        guard !proxyURL.isEmpty else {
+            throw OpenAIServiceError.missingProxyURL
+        }
+
+        let payload = OpenAIResponseRequest(
+            model: AppSecrets.openAIModel,
+            input: [
+                .init(role: "system", content: [.init(type: "input_text", text: peopleSearchSystemPrompt)]),
+                .init(role: "user", content: [.init(type: "input_text", text: buildPeopleSearchPrompt(query: query, candidates: candidates))])
+            ],
+            text: .init(
+                format: .init(
+                    type: "json_schema",
+                    name: "people_search_recommendations",
+                    strict: true,
+                    schema: PeopleSearchRecommendationsEnvelope.jsonSchema
+                )
+            )
+        )
+
+        let decoded = try await sendResponsesRequest(payload, proxyURL: proxyURL)
+        guard let jsonText = decoded.outputText ?? decoded.outputMessageText else {
+            throw OpenAIServiceError.invalidResponse
+        }
+
+        return try decodeJSONPayload(PeopleSearchRecommendationsEnvelope.self, from: jsonText).recommendations
+    }
+
     private func sendResponsesRequest(_ payload: OpenAIResponseRequest, proxyURL: String) async throws -> OpenAIResponseEnvelope {
         guard let url = URL(string: proxyURL) else {
             throw OpenAIServiceError.missingProxyURL
@@ -137,6 +197,26 @@ final class OpenAIService {
         """
     }
 
+    private var relationshipAnalysisSystemPrompt: String {
+        """
+        You analyze the relationship value and follow-up strategy for a newly scanned business card.
+        Return JSON only in Traditional Chinese.
+        Be helpful, practical, and avoid sounding manipulative.
+        Base the analysis only on the provided card details and user goal/context.
+        If information is limited, explicitly say the confidence is limited.
+        """
+    }
+
+    private var peopleSearchSystemPrompt: String {
+        """
+        你是一個人脈助手。
+        請根據使用者需求，從候選聯絡人中選出最相關的 3 位。
+        回傳內容必須是繁體中文 JSON。
+        每位推薦都要包含簡短理由，理由要具體、可信，不要誇大。
+        若資訊不足，也要誠實說明是根據公司、職稱或 email 網域推測。
+        """
+    }
+
     private func buildUserPrompt(lines: [OCRTextLine], fallback: ScannedCard) -> String {
         let lineDescriptions = lines.enumerated().map { index, line in
             let box = line.boundingBox
@@ -190,6 +270,61 @@ final class OpenAIService {
 
         User context:
         \(context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "none provided" : context)
+        """
+    }
+
+    private func buildRelationshipAnalysisPrompt(card: ScannedCard, goal: String, context: String) -> String {
+        let phones = card.phoneNumbers
+            .map { "\($0.kind.rawValue): \($0.value)" }
+            .joined(separator: ", ")
+        let emails = card.emails
+            .map { "\($0.kind.rawValue): \($0.value)" }
+            .joined(separator: ", ")
+
+        return """
+        Contact info:
+        - name: \(card.displayName)
+        - company: \(card.company)
+        - job_title: \(card.jobTitle)
+        - phones: \(phones)
+        - emails: \(emails)
+        - address: \(card.address)
+
+        User goal:
+        \(goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "general networking" : goal)
+
+        Extra context:
+        \(context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "none provided" : context)
+
+        Return:
+        - a short summary of who this person likely is
+        - relationship priority: high, medium, or low
+        - why this contact may be valuable
+        - possible collaboration opportunities
+        - practical next action
+        - one caution or missing-information note
+        """
+    }
+
+    private func buildPeopleSearchPrompt(query: String, candidates: [SearchableContact]) -> String {
+        let candidateLines = candidates.enumerated().map { index, contact in
+            """
+            \(index + 1). id: \(contact.id)
+               name: \(contact.name)
+               company: \(contact.company)
+               job_title: \(contact.jobTitle)
+               email: \(contact.email)
+            """
+        }.joined(separator: "\n")
+
+        return """
+        使用者需求：
+        \(query)
+
+        以下是候選聯絡人：
+        \(candidateLines)
+
+        請選出最相關的 3 位，並為每位提供一句繁體中文推薦理由。
         """
     }
 
@@ -382,6 +517,97 @@ private struct OutreachSuggestionsEnvelope: Decodable {
                 ])
             ]),
             "required": .array([.string("suggestions")])
+        ])
+    }
+}
+
+struct RelationshipValueAnalysis: Codable, Equatable {
+    let headline: String
+    let priority: String
+    let summary: String
+    let valueReasons: [String]
+    let opportunities: [String]
+    let nextAction: String
+    let caution: String
+
+    enum CodingKeys: String, CodingKey {
+        case headline
+        case priority
+        case summary
+        case valueReasons = "value_reasons"
+        case opportunities
+        case nextAction = "next_action"
+        case caution
+    }
+
+    static var jsonSchema: JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "headline": .object(["type": .string("string")]),
+                "priority": .object(["type": .string("string")]),
+                "summary": .object(["type": .string("string")]),
+                "value_reasons": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")])
+                ]),
+                "opportunities": .object([
+                    "type": .string("array"),
+                    "items": .object(["type": .string("string")])
+                ]),
+                "next_action": .object(["type": .string("string")]),
+                "caution": .object(["type": .string("string")])
+            ]),
+            "required": .array([
+                .string("headline"),
+                .string("priority"),
+                .string("summary"),
+                .string("value_reasons"),
+                .string("opportunities"),
+                .string("next_action"),
+                .string("caution")
+            ])
+        ])
+    }
+}
+
+struct PeopleSearchRecommendation: Decodable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let company: String
+    let reason: String
+}
+
+private struct PeopleSearchRecommendationsEnvelope: Decodable {
+    let recommendations: [PeopleSearchRecommendation]
+
+    static var jsonSchema: JSONValue {
+        .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object([
+                "recommendations": .object([
+                    "type": .string("array"),
+                    "items": .object([
+                        "type": .string("object"),
+                        "additionalProperties": .bool(false),
+                        "properties": .object([
+                            "id": .object(["type": .string("string")]),
+                            "name": .object(["type": .string("string")]),
+                            "company": .object(["type": .string("string")]),
+                            "reason": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([
+                            .string("id"),
+                            .string("name"),
+                            .string("company"),
+                            .string("reason"),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            "required": .array([.string("recommendations")]),
         ])
     }
 }

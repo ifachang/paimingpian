@@ -11,6 +11,18 @@ enum ContactStoreServiceError: LocalizedError {
     }
 }
 
+struct SearchableContact: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let company: String
+    let email: String
+    let jobTitle: String
+
+    var displayCompany: String {
+        company.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未提供公司" : company
+    }
+}
+
 final class ContactStoreService {
     private let store = CNContactStore()
 
@@ -55,6 +67,52 @@ final class ContactStoreService {
         let request = CNSaveRequest()
         request.add(contact, toContainerWithIdentifier: nil)
         try store.execute(request)
+    }
+
+    func fetchSearchableContacts() async throws -> [SearchableContact] {
+        let granted = try await requestAccess()
+        guard granted else {
+            throw ContactStoreServiceError.accessDenied
+        }
+
+        let keys: [CNKeyDescriptor] = [
+            CNContactIdentifierKey as CNKeyDescriptor,
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactOrganizationNameKey as CNKeyDescriptor,
+            CNContactJobTitleKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor,
+        ]
+
+        let request = CNContactFetchRequest(keysToFetch: keys)
+        request.unifyResults = true
+
+        var contacts: [SearchableContact] = []
+
+        try store.enumerateContacts(with: request) { contact, _ in
+            let fullName = [contact.familyName, contact.givenName]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined()
+            let fallbackName = [contact.givenName, contact.familyName]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: " ")
+            let resolvedName = (fullName.isEmpty ? fallbackName : fullName)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let primaryEmail = contact.emailAddresses.first?.value as String? ?? ""
+
+            let item = SearchableContact(
+                id: contact.identifier,
+                name: resolvedName.isEmpty ? "未命名聯絡人" : resolvedName,
+                company: contact.organizationName.trimmingCharacters(in: .whitespacesAndNewlines),
+                email: primaryEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                jobTitle: contact.jobTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+
+            contacts.append(item)
+        }
+
+        return contacts
     }
 
     private func requestAccess() async throws -> Bool {
